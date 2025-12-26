@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create SG APP Icons</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #1e1e1e;
+      color: white;
+    }
+    canvas {
+      border: 2px solid #3b82f6;
+      margin: 10px;
+      background: white;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    button {
+      margin: 10px;
+      padding: 10px 20px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SG APP Icon Generator</h1>
+    <canvas id="canvas192" width="192" height="192"></canvas>
+    <canvas id="canvas512" width="512" height="512"></canvas>
+    <button onclick="downloadAll()">Download All Icons</button>
+  </div>
+  <script>
+    function createIcon(size, canvasId) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+      
+      // Clear canvas
+      ctx.clearRect(0, 0, size, size);
+      
+      // Create gradient background
+      const bgGradient = ctx.createLinearGradient(0, 0, size, size);
+      bgGradient.addColorStop(0, '#1e40af'); // Blue-800
+      bgGradient.addColorStop(1, '#3b82f6'); // Blue-500
+      
+      // Draw rounded rectangle background
+      const cornerRadius = size * 0.22; // ~22% of size for nice rounded corners
+      ctx.fillStyle = bgGradient;
+      ctx.beginPath();
+      ctx.moveTo(cornerRadius, 0);
+      ctx.lineTo(size - cornerRadius, 0);
+      ctx.quadraticCurveTo(size, 0, size, cornerRadius);
+      ctx.lineTo(size, size - cornerRadius);
+      ctx.quadraticCurveTo(size, size, size - cornerRadius, size);
+      ctx.lineTo(cornerRadius, size);
+      ctx.quadraticCurveTo(0, size, 0, size - cornerRadius);
+      ctx.lineTo(0, cornerRadius);
+      ctx.quadraticCurveTo(0, 0, cornerRadius, 0);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Create text gradient
+      const textGradient = ctx.createLinearGradient(0, 0, size, size);
+      textGradient.addColorStop(0, '#ffffff');
+      textGradient.addColorStop(1, '#e0e7ff');
+      
+      // Calculate font sizes to fit properly
+      const fontSizeSG = size * 0.28; // 28% of icon size for "SG"
+      const fontSizeAPP = size * 0.28; // 28% of icon size for "APP"
+      
+      ctx.fillStyle = textGradient;
+      ctx.font = `bold ${fontSizeSG}px Arial, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      // Draw "SG" - positioned in upper portion
+      ctx.fillText('SG', size / 2, size * 0.38);
+      
+      // Draw "APP" - positioned in lower portion
+      ctx.font = `bold ${fontSizeAPP}px Arial, sans-serif`;
+      ctx.fillText('APP', size / 2, size * 0.68);
+      
+      return canvas;
+    }
+    
+    function downloadIcon(canvas, filename) {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+    
+    function downloadAll() {
+      const canvas192 = createIcon(192, 'canvas192');
+      const canvas512 = createIcon(512, 'canvas512');
+      
+      setTimeout(() => {
+        downloadIcon(canvas192, 'icon-192.png');
+        setTimeout(() => {
+          downloadIcon(canvas512, 'icon-512.png');
+        }, 300);
+      }, 100);
+    }
+    
+    // Auto-generate on load
+    window.onload = () => {
+      createIcon(192, 'canvas192');
+      createIcon(512, 'canvas512');
+    };
+  </script>
+</body>
+</html>
