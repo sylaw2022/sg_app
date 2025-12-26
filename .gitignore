@@ -23,7 +23,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local env files
-.env*.local
+# .env*.local - Commented out to allow .env.local to be committed
 .env
 
 # Vercel
