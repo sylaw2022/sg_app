@@ -167,6 +167,17 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
         .select('*')
         .eq('to_id', currentUser.id)
       
+      if (incomingError) {
+        // Handle 406 and other errors gracefully
+        if (incomingError.code === '406' || incomingError.message?.includes('406')) {
+          console.warn('⚠️ [DEBUG] 406 error fetching incoming friend requests (RLS or header issue):', incomingError.message)
+          // Continue with empty array instead of failing
+          setFriendRequests([])
+        } else {
+          console.error('❌ [DEBUG] Error fetching incoming friend requests:', incomingError)
+        }
+      }
+      
       if (!incomingError && incomingRequests) {
         // Fetch user data for each request
         const fromIds = incomingRequests.map(r => r.from_id)
@@ -224,6 +235,16 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
         .from('friend_requests')
         .select('*')
         .eq('from_id', currentUser.id)
+      
+      if (outgoingError) {
+        // Handle 406 and other errors gracefully
+        if (outgoingError.code === '406' || outgoingError.message?.includes('406')) {
+          console.warn('⚠️ [DEBUG] 406 error fetching outgoing friend requests (RLS or header issue):', outgoingError.message)
+          // Continue with empty array instead of failing
+        } else {
+          console.error('❌ [DEBUG] Error fetching outgoing friend requests:', outgoingError)
+        }
+      }
       
       if (!outgoingError && outgoingRequests) {
         // Fetch user data for each request
@@ -704,16 +725,13 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
         // This ensures rejected requests stay visible until user clears them
       })
       .subscribe((status) => {
-        console.log('📡 [DEBUG] Friend request channel subscription status:', status)
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ [DEBUG] Successfully subscribed to friend request channel for user:', currentUser.id)
-        } else if (status === 'CHANNEL_ERROR') {
+        // Only log important status changes, not every SUBSCRIBED/CLOSED cycle
+        if (status === 'CHANNEL_ERROR') {
           console.error('❌ [DEBUG] Friend request channel error')
         } else if (status === 'TIMED_OUT') {
           console.warn('⏱️ [DEBUG] Friend request channel subscription timed out')
-        } else if (status === 'CLOSED') {
-          console.log('🔒 [DEBUG] Friend request channel closed')
         }
+        // Don't log SUBSCRIBED/CLOSED as they happen frequently during re-renders
       })
 
     // Add polling fallback in case realtime is slow or not working
@@ -773,11 +791,10 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
     }, 3000) // Poll every 3 seconds
 
     return () => {
-      console.log('🧹 [DEBUG] Cleaning up friend request channel and polling')
       clearInterval(pollInterval)
       supabase.removeChannel(friendRequestChannel)
     }
-  }, [currentUser, friendRequests])
+  }, [currentUser]) // Only depend on currentUser to avoid re-subscribing when friendRequests changes
 
   // Load and listen for notifications
   useEffect(() => {
@@ -959,8 +976,8 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
 
     loadNotifications()
 
-    // Listen for new notifications
-    const notificationChannel = supabase.channel('notifications-listener')
+    // Listen for new notifications - use unique channel name per user
+    const notificationChannel = supabase.channel(`notifications-listener-${currentUser.id}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -993,16 +1010,24 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
         }
 
         // Add to notifications list
-        console.log('🔔 [DEBUG] Adding notification to state:', {
-          beforeCount: notifications.length,
-          newNotification: {
-            id: newNotification.id,
-            type: newNotification.type,
-            related_user_id: newNotification.related_user_id,
-            hasRelatedUser: !!newNotification.related_user
-          }
-        })
         setNotifications(prev => {
+          // Check if notification already exists to avoid duplicates
+          const exists = prev.some(n => n.id === newNotification.id)
+          if (exists) {
+            console.log('⚠️ [DEBUG] Notification already in state, skipping:', newNotification.id)
+            return prev
+          }
+          
+          console.log('🔔 [DEBUG] Adding notification to state:', {
+            beforeCount: prev.length,
+            newNotification: {
+              id: newNotification.id,
+              type: newNotification.type,
+              related_user_id: newNotification.related_user_id,
+              hasRelatedUser: !!newNotification.related_user
+            }
+          })
+          
           const updated = [newNotification, ...prev]
           console.log('🔔 [DEBUG] Notifications state updated:', {
             newCount: updated.length,
@@ -1015,20 +1040,22 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
 
         // Set persistent status for rejection notifications (after fetching related_user)
         if (newNotification.type === 'friend_request_rejected') {
-          // Check if this rejection has been cleared before setting it as active
-          const requestKey = `${currentUser.id}-${newNotification.related_user_id}`
-          const isCleared = clearedRequestStatuses.has(requestKey)
+          // Use functional update to get latest clearedRequestStatuses
+          setClearedRequestStatuses(currentCleared => {
+            // Check if this rejection has been cleared before setting it as active
+            const requestKey = `${currentUser.id}-${newNotification.related_user_id}`
+            const isCleared = currentCleared.has(requestKey)
           
-          if (!isCleared) {
-            setActiveRejectionNotification(newNotification)
-          } else {
-            console.log('🚫 [DEBUG] Skipping setting active rejection notification - already cleared:', requestKey)
-          }
-          
-          // ALWAYS ensure the sent request stays in the list even if it was deleted from database
-          // This allows the user to see the rejected status and clear it manually
-          // BUT: Don't add it back if the user has already cleared it
-          setSentFriendRequests(prev => {
+            if (!isCleared) {
+              setActiveRejectionNotification(newNotification)
+            } else {
+              console.log('🚫 [DEBUG] Skipping setting active rejection notification - already cleared:', requestKey)
+            }
+            
+            // ALWAYS ensure the sent request stays in the list even if it was deleted from database
+            // This allows the user to see the rejected status and clear it manually
+            // BUT: Don't add it back if the user has already cleared it
+            setSentFriendRequests(prev => {
             // Check if the sent request for this user already exists
             const requestExists = prev.some(
               r => r.to_id === newNotification.related_user_id
@@ -1101,6 +1128,9 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
             
             return prev
           })
+            
+            return currentCleared // Return unchanged
+          })
         }
       })
       .on('postgres_changes', {
@@ -1121,7 +1151,8 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
         })
       })
       .subscribe((status) => {
-        console.log('📡 [DEBUG] Notification channel subscription status:', status)
+        // Log subscription status for debugging
+        console.log('📡 [DEBUG] Notification channel subscription status:', status, 'for user:', currentUser.id)
         if (status === 'SUBSCRIBED') {
           console.log('✅ [DEBUG] Successfully subscribed to notification channel for user:', currentUser.id)
         } else if (status === 'CHANNEL_ERROR') {
@@ -1134,13 +1165,22 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
       })
 
     // Add polling fallback in case realtime is slow or not working
-    // Poll every 5 seconds to check for new notifications
+    // Poll every 3 seconds to check for new notifications (more frequent for better responsiveness)
     const pollInterval = setInterval(async () => {
-      console.log('🔄 [DEBUG] Polling for new notifications (fallback)')
       try {
+        // Get the latest notification ID from state to compare
+        let latestKnownId = 0
+        setNotifications(currentNotifications => {
+          if (currentNotifications.length > 0) {
+            latestKnownId = currentNotifications[0].id
+          }
+          return currentNotifications
+        })
+        
+        // Fetch the latest notification from database
         const { data: latestNotifications, error: pollError } = await supabase
           .from('notifications')
-          .select('id, createdAt')
+          .select('id, createdAt, type, related_user_id')
           .eq('user_id', currentUser.id)
           .order('createdAt', { ascending: false })
           .limit(1)
@@ -1150,12 +1190,33 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
           const latestId = latestNotification.id
           const latestTime = new Date(latestNotification.createdAt).getTime()
           
-          // Check if we have this notification in state
-          const hasLatest = notifications.some(n => n.id === latestId)
+          // Check if we have this notification in state using functional update
+          let hasLatestInState = false
+          let shouldRefresh = false
           
-          // If we don't have the latest notification and it's recent (within last 10 seconds), refresh
-          // BUT: Check if it's a rejection that has been cleared - if so, don't refresh
-          if (!hasLatest && latestTime > Date.now() - 10000) {
+          setNotifications(currentNotifications => {
+            hasLatestInState = currentNotifications.some(n => n.id === latestId)
+            // If we don't have the latest notification and it's recent (within last 60 seconds), refresh
+            if (!hasLatestInState && latestTime > Date.now() - 60000) {
+              shouldRefresh = true
+              console.log('🔄 [DEBUG] Polling found new notification not in state:', {
+                latestId,
+                latestKnownId: currentNotifications.length > 0 ? currentNotifications[0].id : 0,
+                type: latestNotification.type,
+                timeDiffSeconds: Math.round((Date.now() - latestTime) / 1000),
+                createdAt: latestNotification.createdAt
+              })
+            }
+            return currentNotifications // Return unchanged state
+          })
+          
+          // Use a small timeout to ensure the state update callback has executed
+          // Then check if we need to refresh
+          if (shouldRefresh) {
+            // Use setTimeout to ensure state callback has executed
+            setTimeout(async () => {
+              console.log('🔄 [DEBUG] Polling: Refreshing notifications...')
+            
             // Check if this is a rejection notification that has been cleared
             const { data: notificationDetails } = await supabase
               .from('notifications')
@@ -1163,18 +1224,45 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
               .eq('id', latestId)
               .single()
             
+            // Check if cleared using functional update
+            // IMPORTANT: Even if a rejection is marked as cleared, we should still refresh
+            // if we don't have notifications in state (latestKnownId: 0)
+            // The cleared status only prevents showing it as "active", not loading it
+            let isCleared = false
+            let hasNotificationsInState = false
+            
             if (notificationDetails && notificationDetails.type === 'friend_request_rejected') {
-              const requestKey = `${currentUser.id}-${notificationDetails.related_user_id}`
-              const isCleared = clearedRequestStatuses.has(requestKey)
+              // Check both cleared status and current notification state
+              setClearedRequestStatuses(currentCleared => {
+                const requestKey = `${currentUser.id}-${notificationDetails.related_user_id}`
+                isCleared = currentCleared.has(requestKey)
+                return currentCleared // Return unchanged
+              })
               
-              if (isCleared) {
-                console.log('🚫 [DEBUG] Found new rejection notification but it has been cleared, skipping refresh')
-                return // Don't refresh if it's been cleared
+              setNotifications(currentNotifications => {
+                hasNotificationsInState = currentNotifications.length > 0
+                return currentNotifications
+              })
+              
+              // Small delay to ensure state callbacks have executed
+              await new Promise(resolve => setTimeout(resolve, 10))
+              
+              // Only skip if it's cleared AND we already have notifications in state
+              // If we have no notifications (latestKnownId: 0), we MUST refresh to load them
+              if (isCleared && hasNotificationsInState) {
+                console.log('🚫 [DEBUG] Polling: Rejection notification has been cleared and we have notifications, skipping refresh')
+                return // Don't refresh if it's been cleared and we already have notifications
+              } else if (isCleared && !hasNotificationsInState) {
+                console.log('⚠️ [DEBUG] Polling: Rejection was cleared but no notifications in state (latestKnownId: 0), refreshing anyway to load notifications')
+                // Continue to refresh below - we need to load notifications even if this one is cleared
+              } else if (!isCleared) {
+                console.log('✅ [DEBUG] Polling: Rejection notification not cleared, refreshing')
+                // Continue to refresh below
               }
             }
             
-            console.log('🔄 [DEBUG] Found new notification not in state, refreshing...')
-            // Reload notifications manually (can't call loadNotifications from here)
+            // Reload all notifications
+            console.log('📥 [DEBUG] Polling: Fetching all notifications from database...')
             const { data: notificationsData, error: notifError } = await supabase
               .from('notifications')
               .select('*')
@@ -1182,7 +1270,14 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
               .order('createdAt', { ascending: false })
               .limit(50)
             
-            if (!notifError && notificationsData) {
+            if (notifError) {
+              console.error('❌ [DEBUG] Polling: Error fetching notifications:', notifError)
+              return
+            }
+            
+            if (notificationsData) {
+              console.log('✅ [DEBUG] Polling: Fetched', notificationsData.length, 'notifications')
+              
               // Fetch related users
               const notificationsWithUsers = await Promise.all(
                 (notificationsData as Notification[]).map(async (notification) => {
@@ -1201,35 +1296,35 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
                 })
               )
               
+              console.log('✅ [DEBUG] Polling: Setting notifications in state:', notificationsWithUsers.length)
               setNotifications(notificationsWithUsers)
               const unread = notificationsWithUsers.filter((n: Notification) => !n.is_read).length
               setUnreadNotificationCount(unread)
               
               // Set active rejection notification if there's an unread one (and not cleared)
-              const unreadRejection = notificationsWithUsers.find(
-                (n: Notification) => n.type === 'friend_request_rejected' && !n.is_read
-              )
-              if (unreadRejection && !activeRejectionNotification) {
-                const requestKey = `${currentUser.id}-${unreadRejection.related_user_id}`
-                const isCleared = clearedRequestStatuses.has(requestKey)
-                if (!isCleared) {
+              if (notificationDetails && notificationDetails.type === 'friend_request_rejected' && !isCleared) {
+                const unreadRejection = notificationsWithUsers.find(
+                  (n: Notification) => n.type === 'friend_request_rejected' && !n.is_read
+                )
+                if (unreadRejection) {
+                  console.log('✅ [DEBUG] Polling: Setting active rejection notification')
                   setActiveRejectionNotification(unreadRejection)
                 }
               }
             }
+            }, 0) // Use setTimeout to ensure state callback has executed
           }
         }
       } catch (err) {
-        console.error('❌ [DEBUG] Error polling notifications:', err)
+        // Silently handle errors in polling
       }
-    }, 5000) // Poll every 5 seconds
+    }, 3000) // Poll every 3 seconds for better responsiveness
 
     return () => {
-      console.log('🧹 [DEBUG] Cleaning up notification channel and polling')
       clearInterval(pollInterval)
       supabase.removeChannel(notificationChannel)
     }
-  }, [currentUser, notifications, clearedRequestStatuses, activeRejectionNotification])
+  }, [currentUser]) // Only depend on currentUser to avoid re-subscribing when state changes
 
   // Load user backgrounds and selected background from localStorage on mount
   useEffect(() => {
@@ -1439,12 +1534,21 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
   const sendFriendRequest = async (targetUser: User) => {
     try {
       // Check if request already exists
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('friend_requests')
         .select('*')
         .eq('from_id', currentUser.id)
         .eq('to_id', targetUser.id)
-        .single()
+        .maybeSingle() // Use maybeSingle() instead of single() to handle not found gracefully
+      
+      if (existingError && existingError.code !== 'PGRST116') { // PGRST116 is "not found" which is OK
+        if (existingError.code === '406' || existingError.message?.includes('406')) {
+          console.warn('⚠️ [DEBUG] 406 error checking existing friend request (RLS or header issue):', existingError.message)
+          // Continue - assume no existing request
+        } else {
+          console.error('❌ [DEBUG] Error checking existing friend request:', existingError)
+        }
+      }
 
       if (existing) {
         alert('Friend request already sent')
@@ -1612,16 +1716,33 @@ export default function Sidebar({ currentUser, onSelect, onUpdateUser, onLogout,
             })
           }
         } else {
-          console.log('⏳ [DEBUG] Notification is for another user, will be received via realtime listener')
+          console.log('⏳ [DEBUG] Notification is for another user (user_id:', notificationResult.user_id, '), will be received via realtime listener')
           // The notification is for someone else, so we don't need to update our state
-          // But we should trigger a refresh for the recipient if possible
+          // The realtime listener on that user's client should catch it
+          // Verify the notification was created correctly
+          const { data: verifyNotification } = await supabase
+            .from('notifications')
+            .select('*')
+            .eq('id', notificationResult.id)
+            .single()
+          
+          if (verifyNotification) {
+            console.log('✅ [DEBUG] Notification verified in database:', {
+              id: verifyNotification.id,
+              user_id: verifyNotification.user_id,
+              type: verifyNotification.type,
+              related_user_id: verifyNotification.related_user_id
+            })
+          } else {
+            console.error('❌ [DEBUG] Notification not found in database after creation!')
+          }
         }
       }
       
       // Note: The notification is for request.from_id (the person who sent the request)
       // If that's the current user, we've already added it to state above
       // If not, the realtime listener should catch it, but we can't manually refresh for another user
-      console.log('📋 [DEBUG] Notification created for user_id:', notificationResult?.user_id, 'Current user_id:', currentUser.id)
+      console.log('📋 [DEBUG] Notification creation complete. Notification user_id:', notificationResult?.user_id, 'Current user_id:', currentUser.id)
 
       // Don't call fetchData() immediately - let the realtime notification handler
       // add the request back to the list. This prevents race conditions where

@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS friend_requests (
     CHECK (from_id != to_id)
 );
 
+-- Enable RLS for friend_requests
+ALTER TABLE friend_requests ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policy if it exists
+DROP POLICY IF EXISTS "Public Access" ON friend_requests;
+
+-- Create policy for friend_requests table
+CREATE POLICY "Public Access" ON friend_requests FOR ALL USING (true);
+
 -- Notifications table
 CREATE TABLE IF NOT EXISTS notifications (
     id SERIAL PRIMARY KEY,
