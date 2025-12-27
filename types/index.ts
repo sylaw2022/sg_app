@@ -6,6 +6,7 @@ export interface User {
   nickname: string;
   avatar: string;
   phone_number?: string;
+  mode?: 'public' | 'private';
   isVisible: boolean;
   createdAt: string;
 }
@@ -38,4 +39,17 @@ export interface Message {
   is_read?: boolean;
   // Joins
   sender?: User;
+}
+
+export interface Notification {
+  id: number;
+  user_id: number;
+  type: 'friend_request_rejected' | 'friend_request_accepted' | 'message' | 'call';
+  title: string;
+  message?: string;
+  related_user_id?: number | null;
+  is_read: boolean;
+  createdAt: string;
+  // Joins
+  related_user?: User;
 }

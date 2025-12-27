@@ -11,12 +11,16 @@ CREATE TABLE IF NOT EXISTS users (
     nickname TEXT DEFAULT '',
     avatar TEXT DEFAULT '',
     phone_number TEXT,
+    mode TEXT DEFAULT 'private' CHECK(mode IN ('public', 'private')),
     "isVisible" BOOLEAN DEFAULT true,
     "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Add phone_number column if it doesn't exist
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT;
+
+-- Add mode column if it doesn't exist
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'private' CHECK(mode IN ('public', 'private'));
 
 -- OTP Verifications table
 CREATE TABLE IF NOT EXISTS otp_verifications (
@@ -56,6 +60,32 @@ CREATE TABLE IF NOT EXISTS friend_requests (
     PRIMARY KEY (from_id, to_id),
     CHECK (from_id != to_id)
 );
+
+-- Notifications table
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK(type IN ('friend_request_rejected', 'friend_request_accepted', 'message', 'call')),
+    title TEXT NOT NULL,
+    message TEXT,
+    related_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    is_read BOOLEAN DEFAULT false,
+    "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add indexes for notifications
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications("createdAt" DESC);
+
+-- Enable RLS for notifications
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policy if it exists
+DROP POLICY IF EXISTS "Public Access" ON notifications;
+
+-- Create policy for notifications table
+CREATE POLICY "Public Access" ON notifications FOR ALL USING (true);
 
 -- Groups table
 CREATE TABLE IF NOT EXISTS groups (

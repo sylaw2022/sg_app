@@ -193,3 +193,4 @@ export default function AdminRegistration({ onBack, onSuccess }: AdminRegistrati
   )
 }
 
+

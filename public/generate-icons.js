@@ -49,3 +49,4 @@ fs.writeFileSync(path.join(__dirname, 'icon-512x512.svg'), svg512);
 console.log('✅ SVG icons created: icon-192x192.svg and icon-512x512.svg');
 console.log('📝 To convert to PNG, open create-icons.html in a browser and click "Download All Icons"');
 
+
